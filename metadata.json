@@ -1,0 +1,7 @@
+{
+  "name": "Toko HP Novi",
+  "description": "Katalog smartphone modern Toko HP Novi - Solusi kebutuhan smartphone Anda.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
