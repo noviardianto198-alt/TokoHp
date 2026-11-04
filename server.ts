@@ -75,6 +75,15 @@ async function startServer() {
   app.use(express.json());
 
 
+  // 0. Public Supabase config for browser client auth
+  app.get('/api/auth/config', (_req: Request, res: Response) => {
+    const { url, anonKey } = getSupabaseConfig();
+    res.json({
+      supabaseUrl: url || '',
+      supabaseAnonKey: anonKey || '',
+    });
+  });
+
   // 1. Health check & Database Status endpoint
   app.get('/api/health', async (_req: Request, res: Response) => {
     const { url, anonKey } = getSupabaseConfig();
@@ -670,6 +679,664 @@ ${catalogSummary}`,
         error: error.message || 'Terjadi kesalahan saat memproses permintaan AI.',
       });
     }
+  });
+
+  // =========================================================================
+  // ADMIN & MANAJEMEN SISTEM ENDPOINTS
+  // =========================================================================
+
+  // In-memory fallback stores for auxiliary tables if not yet created via SQL migration
+  const memStockMovements: any[] = [];
+  const memCategories: { id: string; name: string; description?: string; created_at: string }[] = [
+    { id: 'cat-1', name: 'Smartphone', description: 'Perangkat telepon pintar resmi', created_at: new Date().toISOString() },
+    { id: 'cat-2', name: 'Tablet', description: 'Tablet produktivitas dan hiburan', created_at: new Date().toISOString() },
+    { id: 'cat-3', name: 'Smartwatch', description: 'Jam tangan pintar dan pelacak olahraga', created_at: new Date().toISOString() },
+    { id: 'cat-4', name: 'Aksesori', description: 'Aksesori pendukung gadget original', created_at: new Date().toISOString() },
+    { id: 'cat-5', name: 'Charger', description: 'Kepala charger GaN dan fast charging', created_at: new Date().toISOString() },
+    { id: 'cat-6', name: 'Earphone', description: 'TWS bluetooth dan headphone', created_at: new Date().toISOString() },
+    { id: 'cat-7', name: 'Power Bank', description: 'Power bank kapasitas tinggi', created_at: new Date().toISOString() },
+    { id: 'cat-8', name: 'Kabel Data', description: 'Kabel data Type-C & Lightning', created_at: new Date().toISOString() },
+  ];
+  const memBrands: { id: string; name: string; description?: string; created_at: string }[] = [
+    { id: 'br-1', name: 'Samsung', description: 'Garansi Resmi SEIN', created_at: new Date().toISOString() },
+    { id: 'br-2', name: 'Apple', description: 'Garansi Resmi iBox / GDN', created_at: new Date().toISOString() },
+    { id: 'br-3', name: 'Xiaomi', description: 'Garansi Resmi Xiaomi Indonesia', created_at: new Date().toISOString() },
+    { id: 'br-4', name: 'Redmi', description: 'Garansi Resmi Xiaomi Indonesia', created_at: new Date().toISOString() },
+    { id: 'br-5', name: 'POCO', description: 'Garansi Resmi POCO Indonesia', created_at: new Date().toISOString() },
+    { id: 'br-6', name: 'OPPO', description: 'Garansi Resmi OPPO Indonesia', created_at: new Date().toISOString() },
+    { id: 'br-7', name: 'vivo', description: 'Garansi Resmi vivo Indonesia', created_at: new Date().toISOString() },
+    { id: 'br-8', name: 'Infinix', description: 'Garansi Resmi Infinix Indonesia', created_at: new Date().toISOString() },
+    { id: 'br-9', name: 'TECNO', description: 'Garansi Resmi TECNO Indonesia', created_at: new Date().toISOString() },
+    { id: 'br-10', name: 'Universal', description: 'Aksesori Original & Kompatibel', created_at: new Date().toISOString() },
+  ];
+  const memOrders: any[] = [];
+
+  // A. Admin Dashboard Metrics
+  app.get('/api/admin/metrics', async (_req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      res.status(503).json({ error: 'Supabase belum terhubung.' });
+      return;
+    }
+
+    try {
+      // 1. Ambil semua produk untuk kalkulasi metrik
+      const { data: allProds, error: pErr } = await supabase
+        .from('phone_products')
+        .select('*');
+
+      if (pErr) {
+        res.status(500).json({ error: pErr.message });
+        return;
+      }
+
+      const products = allProds || [];
+      const totalProducts = products.length;
+      const outOfStockCount = products.filter((p) => Number(p.stock) <= 0).length;
+      const lowStockCount = products.filter((p) => Number(p.stock) > 0 && Number(p.stock) <= 5).length;
+      const lowStockProducts = products.filter((p) => Number(p.stock) <= 5);
+
+      // 2. Kategori unik
+      const uniqueCats = new Set<string>();
+      products.forEach((p) => {
+        if (p.category) uniqueCats.add(p.category);
+      });
+      memCategories.forEach((c) => uniqueCats.add(c.name));
+      const totalCategories = uniqueCats.size;
+
+      // 3. Pesanan
+      const pendingOrders = memOrders.filter((o) => o.status === 'menunggu_konfirmasi').length;
+      const totalOrders = memOrders.length;
+      const totalCustomers = 12; // Base customers registered
+
+      res.json({
+        totalProducts,
+        totalCategories,
+        totalCustomers,
+        totalOrders,
+        pendingOrders,
+        lowStockCount,
+        outOfStockCount,
+        lowStockProducts,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Gagal memuat metrik admin.' });
+    }
+  });
+
+  // B. Admin: Ambil seluruh produk (termasuk yang tidak aktif) untuk tabel manajemen
+  app.get('/api/admin/products/all', async (_req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      res.status(503).json({ error: 'Supabase belum terhubung.' });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('phone_products')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+      }
+
+      res.json({ data: data || [] });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // C. Admin: Tambah produk baru
+  app.post('/api/admin/products', async (req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      res.status(503).json({ error: 'Supabase belum terhubung.' });
+      return;
+    }
+
+    try {
+      const {
+        name,
+        brand,
+        category,
+        price,
+        stock,
+        ram_gb,
+        storage_gb,
+        color,
+        warranty_months,
+        condition,
+        description,
+        image_url,
+        is_active,
+        sku,
+      } = req.body;
+
+      if (!name || !brand || price === undefined || price === null) {
+        res.status(400).json({ error: 'Nama, Merek, dan Harga wajib diisi.' });
+        return;
+      }
+
+      // Generate SKU unik jika belum disediakan
+      const generatedSku =
+        sku?.trim() ||
+        `${brand.substring(0, 3).toUpperCase()}-${Date.now().toString(36).toUpperCase()}-${Math.floor(
+          Math.random() * 1000
+        )}`;
+
+      const newProduct = {
+        sku: generatedSku,
+        name: name.trim(),
+        brand: brand.trim(),
+        category: category?.trim() || 'Smartphone',
+        price: Number(price),
+        stock: Number(stock ?? 0),
+        ram_gb: ram_gb ? Number(ram_gb) : null,
+        storage_gb: storage_gb ? Number(storage_gb) : null,
+        color: color?.trim() || null,
+        warranty_months: warranty_months ? Number(warranty_months) : 12,
+        condition: condition?.trim() || 'Baru',
+        description: description?.trim() || null,
+        image_url: image_url?.trim() || null,
+        is_active: is_active !== false,
+      };
+
+      const { data, error } = await supabase
+        .from('phone_products')
+        .insert(newProduct)
+        .select()
+        .single();
+
+      if (error) {
+        res.status(500).json({ error: `Gagal menambahkan produk ke Supabase: ${error.message}` });
+        return;
+      }
+
+      // Catat log stock movement jika stok awal > 0
+      if (newProduct.stock > 0 && data?.id) {
+        const movementLog = {
+          id: `sm-${Date.now()}`,
+          product_id: data.id,
+          sku: data.sku,
+          product_name: data.name,
+          movement_type: 'masuk',
+          quantity_change: newProduct.stock,
+          stock_before: 0,
+          stock_after: newProduct.stock,
+          notes: 'Stok awal produk baru ditambahkan',
+          created_by: 'Admin',
+          created_at: new Date().toISOString(),
+        };
+        memStockMovements.unshift(movementLog);
+
+        // Coba simpan ke tabel stock_movements jika sudah ada
+        try {
+          await supabase.from('stock_movements').insert(movementLog);
+        } catch {}
+      }
+
+      res.status(201).json({ data, message: 'Produk berhasil disimpan ke Supabase.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Gagal membuat produk baru.' });
+    }
+  });
+
+  // D. Admin: Edit produk
+  app.put('/api/admin/products/:id', async (req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      res.status(503).json({ error: 'Supabase belum terhubung.' });
+      return;
+    }
+
+    try {
+      const { id } = req.params;
+      if (!id) {
+        res.status(400).json({ error: 'ID produk wajib diisi.' });
+        return;
+      }
+
+      // Ambil produk lama untuk memeriksa perubahan stok
+      const { data: oldProd } = await supabase
+        .from('phone_products')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      const {
+        name,
+        brand,
+        category,
+        price,
+        stock,
+        ram_gb,
+        storage_gb,
+        color,
+        warranty_months,
+        condition,
+        description,
+        image_url,
+        is_active,
+        sku,
+      } = req.body;
+
+      const updateData: any = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (name !== undefined) updateData.name = name.trim();
+      if (brand !== undefined) updateData.brand = brand.trim();
+      if (category !== undefined) updateData.category = category.trim();
+      if (price !== undefined) updateData.price = Number(price);
+      if (stock !== undefined) updateData.stock = Number(stock);
+      if (ram_gb !== undefined) updateData.ram_gb = ram_gb ? Number(ram_gb) : null;
+      if (storage_gb !== undefined) updateData.storage_gb = storage_gb ? Number(storage_gb) : null;
+      if (color !== undefined) updateData.color = color?.trim() || null;
+      if (warranty_months !== undefined) updateData.warranty_months = Number(warranty_months);
+      if (condition !== undefined) updateData.condition = condition?.trim() || 'Baru';
+      if (description !== undefined) updateData.description = description?.trim() || null;
+      if (image_url !== undefined) updateData.image_url = image_url?.trim() || null;
+      if (is_active !== undefined) updateData.is_active = Boolean(is_active);
+      if (sku !== undefined && sku.trim()) updateData.sku = sku.trim();
+
+      const { data, error } = await supabase
+        .from('phone_products')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        res.status(500).json({ error: `Gagal memperbarui produk: ${error.message}` });
+        return;
+      }
+
+      // Jika stok berubah, buat log mutasi otomatis
+      if (oldProd && updateData.stock !== undefined && updateData.stock !== oldProd.stock) {
+        const diff = updateData.stock - oldProd.stock;
+        const movementLog = {
+          id: `sm-${Date.now()}`,
+          product_id: id,
+          sku: data.sku,
+          product_name: data.name,
+          movement_type: diff > 0 ? 'masuk' : 'keluar',
+          quantity_change: Math.abs(diff),
+          stock_before: oldProd.stock,
+          stock_after: updateData.stock,
+          notes: 'Pembaruan stok dari form edit produk',
+          created_by: 'Admin',
+          created_at: new Date().toISOString(),
+        };
+        memStockMovements.unshift(movementLog);
+        try {
+          await supabase.from('stock_movements').insert(movementLog);
+        } catch {}
+      }
+
+      res.json({ data, message: 'Produk berhasil diperbarui di Supabase.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Gagal memperbarui produk.' });
+    }
+  });
+
+  // E. Admin: Hapus produk
+  app.delete('/api/admin/products/:id', async (req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      res.status(503).json({ error: 'Supabase belum terhubung.' });
+      return;
+    }
+
+    try {
+      const { id } = req.params;
+      const { error } = await supabase.from('phone_products').delete().eq('id', id);
+
+      if (error) {
+        res.status(500).json({ error: `Gagal menghapus produk: ${error.message}` });
+        return;
+      }
+
+      res.json({ success: true, message: 'Produk berhasil dihapus dari Supabase.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Gagal menghapus produk.' });
+    }
+  });
+
+  // F. Kategori: Ambil semua kategori beserta hitungan produk
+  app.get('/api/categories', async (_req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    try {
+      // Hitung produk per kategori dari tabel phone_products
+      const catCountMap: Record<string, number> = {};
+      if (supabase) {
+        const { data: prods } = await supabase.from('phone_products').select('category');
+        if (prods) {
+          prods.forEach((p) => {
+            const cat = p.category || 'Smartphone';
+            catCountMap[cat] = (catCountMap[cat] || 0) + 1;
+          });
+        }
+      }
+
+      // Ambil dari Supabase tabel product_categories jika tersedia
+      let categoriesList = memCategories;
+      if (supabase) {
+        const { data, error } = await supabase.from('product_categories').select('*');
+        if (!error && data && data.length > 0) {
+          categoriesList = data;
+        }
+      }
+
+      const result = categoriesList.map((c) => ({
+        ...c,
+        productCount: catCountMap[c.name] || 0,
+      }));
+
+      res.json({ data: result });
+    } catch (err: any) {
+      res.json({ data: memCategories.map((c) => ({ ...c, productCount: 0 })) });
+    }
+  });
+
+  // Tambah Kategori
+  app.post('/api/admin/categories', async (req: Request, res: Response) => {
+    const { name, description } = req.body;
+    if (!name?.trim()) {
+      res.status(400).json({ error: 'Nama kategori wajib diisi.' });
+      return;
+    }
+
+    const newCat = {
+      id: `cat-${Date.now()}`,
+      name: name.trim(),
+      description: description?.trim() || '',
+      created_at: new Date().toISOString(),
+    };
+
+    memCategories.unshift(newCat);
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('product_categories').insert({ name: newCat.name, description: newCat.description });
+      } catch {}
+    }
+
+    res.status(201).json({ data: newCat, message: 'Kategori berhasil ditambahkan.' });
+  });
+
+  // Hapus Kategori
+  app.delete('/api/admin/categories/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const idx = memCategories.findIndex((c) => c.id === id);
+    if (idx !== -1) {
+      memCategories.splice(idx, 1);
+    }
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('product_categories').delete().eq('id', id);
+      } catch {}
+    }
+    res.json({ success: true, message: 'Kategori berhasil dihapus.' });
+  });
+
+  // G. Merek: Ambil semua merek beserta hitungan produk
+  app.get('/api/brands', async (_req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    try {
+      const brandCountMap: Record<string, number> = {};
+      if (supabase) {
+        const { data: prods } = await supabase.from('phone_products').select('brand');
+        if (prods) {
+          prods.forEach((p) => {
+            const b = p.brand || 'Lainnya';
+            brandCountMap[b] = (brandCountMap[b] || 0) + 1;
+          });
+        }
+      }
+
+      let brandsList = memBrands;
+      if (supabase) {
+        const { data, error } = await supabase.from('product_brands').select('*');
+        if (!error && data && data.length > 0) {
+          brandsList = data;
+        }
+      }
+
+      const result = brandsList.map((b) => ({
+        ...b,
+        productCount: brandCountMap[b.name] || 0,
+      }));
+
+      res.json({ data: result });
+    } catch (err: any) {
+      res.json({ data: memBrands.map((b) => ({ ...b, productCount: 0 })) });
+    }
+  });
+
+  // Tambah Merek
+  app.post('/api/admin/brands', async (req: Request, res: Response) => {
+    const { name, description } = req.body;
+    if (!name?.trim()) {
+      res.status(400).json({ error: 'Nama merek wajib diisi.' });
+      return;
+    }
+
+    const newBrand = {
+      id: `br-${Date.now()}`,
+      name: name.trim(),
+      description: description?.trim() || '',
+      created_at: new Date().toISOString(),
+    };
+
+    memBrands.unshift(newBrand);
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('product_brands').insert({ name: newBrand.name, description: newBrand.description });
+      } catch {}
+    }
+
+    res.status(201).json({ data: newBrand, message: 'Merek berhasil ditambahkan.' });
+  });
+
+  // Hapus Merek
+  app.delete('/api/admin/brands/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const idx = memBrands.findIndex((b) => b.id === id);
+    if (idx !== -1) {
+      memBrands.splice(idx, 1);
+    }
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('product_brands').delete().eq('id', id);
+      } catch {}
+    }
+    res.json({ success: true, message: 'Merek berhasil dihapus.' });
+  });
+
+  // H. Manajemen Stok & Mutasi Stok (Audit Trail)
+  app.get('/api/admin/stock/movements', async (_req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    try {
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('stock_movements')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          res.json({ data });
+          return;
+        }
+      }
+      res.json({ data: memStockMovements });
+    } catch {
+      res.json({ data: memStockMovements });
+    }
+  });
+
+  // Aksi Penyesuaian Stok (Barang Masuk, Barang Keluar, Koreksi Stok)
+  app.post('/api/admin/stock/adjust', async (req: Request, res: Response) => {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      res.status(503).json({ error: 'Supabase belum terhubung.' });
+      return;
+    }
+
+    try {
+      const { productId, sku, movementType, quantity, notes, adminName } = req.body;
+
+      if (!productId || !movementType || quantity === undefined) {
+        res.status(400).json({ error: 'Parameter productId, movementType, dan quantity wajib diisi.' });
+        return;
+      }
+
+      const parsedQty = Math.max(0, parseInt(quantity, 10));
+
+      // Ambil stok produk terkini dari Supabase
+      const { data: prod, error: pErr } = await supabase
+        .from('phone_products')
+        .select('*')
+        .eq('id', productId)
+        .single();
+
+      if (pErr || !prod) {
+        res.status(404).json({ error: 'Produk tidak ditemukan di database Supabase.' });
+        return;
+      }
+
+      const stockBefore = Number(prod.stock || 0);
+      let stockAfter = stockBefore;
+      let quantityChange = parsedQty;
+
+      if (movementType === 'masuk') {
+        stockAfter = stockBefore + parsedQty;
+        quantityChange = parsedQty;
+      } else if (movementType === 'keluar') {
+        stockAfter = Math.max(0, stockBefore - parsedQty);
+        quantityChange = -parsedQty;
+      } else if (movementType === 'koreksi') {
+        stockAfter = parsedQty;
+        quantityChange = parsedQty - stockBefore;
+      } else {
+        res.status(400).json({ error: 'Tipe mutasi tidak valid (pilih: masuk, keluar, koreksi).' });
+        return;
+      }
+
+      // Update stok produk di database Supabase
+      const { error: updErr } = await supabase
+        .from('phone_products')
+        .update({ stock: stockAfter, updated_at: new Date().toISOString() })
+        .eq('id', productId);
+
+      if (updErr) {
+        res.status(500).json({ error: `Gagal memperbarui stok di Supabase: ${updErr.message}` });
+        return;
+      }
+
+      // Buat entri mutasi stok
+      const movementRecord = {
+        id: `sm-${Date.now()}`,
+        product_id: productId,
+        sku: prod.sku || sku,
+        product_name: prod.name,
+        movement_type: movementType,
+        quantity_change: quantityChange,
+        stock_before: stockBefore,
+        stock_after: stockAfter,
+        notes: notes?.trim() || `Penyesuaian stok (${movementType})`,
+        created_by: adminName || 'Admin Toko',
+        created_at: new Date().toISOString(),
+      };
+
+      memStockMovements.unshift(movementRecord);
+      try {
+        await supabase.from('stock_movements').insert(movementRecord);
+      } catch {}
+
+      res.json({
+        success: true,
+        stockBefore,
+        stockAfter,
+        data: movementRecord,
+        message: `Stok produk ${prod.name} berhasil diubah dari ${stockBefore} menjadi ${stockAfter} unit.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Gagal memproses perubahan stok.' });
+    }
+  });
+
+  // I. Orders (Pesanan Pelanggan)
+  app.get('/api/orders', async (req: Request, res: Response) => {
+    const { email } = req.query;
+    if (email && typeof email === 'string') {
+      const filtered = memOrders.filter((o) => o.customer_email?.toLowerCase() === email.toLowerCase());
+      res.json({ data: filtered });
+      return;
+    }
+    res.json({ data: memOrders });
+  });
+
+  app.post('/api/orders', async (req: Request, res: Response) => {
+    const { customerName, customerEmail, customerPhone, customerAddress, items, totalAmount } = req.body;
+    if (!customerName || !items || !Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: 'Data pesanan tidak lengkap.' });
+      return;
+    }
+
+    const orderNumber = `NOVI-${Date.now().toString().slice(-6)}`;
+    const newOrder = {
+      id: `ord-${Date.now()}`,
+      order_number: orderNumber,
+      customer_name: customerName,
+      customer_email: customerEmail || '',
+      customer_phone: customerPhone || '',
+      customer_address: customerAddress || '',
+      total_amount: Number(totalAmount || 0),
+      status: 'menunggu_konfirmasi',
+      items,
+      created_at: new Date().toISOString(),
+    };
+
+    memOrders.unshift(newOrder);
+
+    // Potong stok produk jika terhubung ke Supabase
+    const supabase = getServerSupabase();
+    if (supabase) {
+      for (const item of items) {
+        if (item.productId && item.quantity) {
+          const { data: p } = await supabase.from('phone_products').select('stock, name, sku').eq('id', item.productId).single();
+          if (p) {
+            const newStock = Math.max(0, Number(p.stock) - Number(item.quantity));
+            await supabase.from('phone_products').update({ stock: newStock }).eq('id', item.productId);
+
+            // Log movement
+            const log = {
+              id: `sm-${Date.now()}-${Math.random()}`,
+              product_id: item.productId,
+              sku: p.sku,
+              product_name: p.name,
+              movement_type: 'keluar',
+              quantity_change: -Number(item.quantity),
+              stock_before: p.stock,
+              stock_after: newStock,
+              notes: `Pesanan pelanggan #${orderNumber}`,
+              created_by: 'Sistem Pesanan',
+              created_at: new Date().toISOString(),
+            };
+            memStockMovements.unshift(log);
+          }
+        }
+      }
+    }
+
+    res.status(201).json({ data: newOrder, message: 'Pesanan berhasil dibuat!' });
   });
 
   // Setup Vite or static serving

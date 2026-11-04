@@ -21,12 +21,14 @@ interface ProductDetailModalProps {
   product: PhoneProduct | null;
   onClose: () => void;
   onAskAI: (product: PhoneProduct) => void;
+  onAddToCart?: (product: PhoneProduct) => void;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   product,
   onClose,
   onAskAI,
+  onAddToCart,
 }) => {
   if (!product) return null;
 
@@ -212,27 +214,40 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row items-center gap-3">
+        <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row items-center gap-2.5">
+          {onAddToCart && Number(product.stock) > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                onAddToCart(product);
+                onClose();
+              }}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 transition-all cursor-pointer text-xs"
+            >
+              <span>+ Keranjang</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
               onClose();
               onAskAI(product);
             }}
-            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-bold text-blue-700 bg-blue-100/80 hover:bg-blue-200 active:scale-[0.99] transition-all cursor-pointer text-sm shadow-xs"
+            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-blue-700 bg-blue-100/80 hover:bg-blue-200 active:scale-[0.99] transition-all cursor-pointer text-xs shadow-xs"
           >
             <Sparkles className="w-4 h-4 text-blue-600" />
-            <span>Tanya AI tentang Produk Ini</span>
+            <span>Tanya AI</span>
           </button>
 
           <a
             href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] transition-all text-sm shadow-md shadow-emerald-600/20"
+            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] transition-all text-xs shadow-md shadow-emerald-600/20"
           >
             <MessageCircle className="w-4 h-4" />
-            <span>Hubungi via WhatsApp</span>
+            <span>Order via WhatsApp</span>
           </a>
         </div>
       </div>

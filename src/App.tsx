@@ -5,6 +5,7 @@ import {
   fetchProductBySku,
 } from './lib/supabase';
 import { STORE_CONFIG, formatRupiah } from './lib/config';
+import { getCurrentUser, logoutUser, UserProfile } from './lib/auth';
 import { Navbar, NavTab } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { CatalogView } from './components/CatalogView';
@@ -15,6 +16,11 @@ import { DatabaseStatusModal } from './components/DatabaseStatusModal';
 import { AboutPage } from './components/AboutPage';
 import { ContactPage } from './components/ContactPage';
 import { ToastContainer, ToastMessage } from './components/Toast';
+import { AuthModal } from './components/AuthModal';
+import { AdminDashboardView, AdminTab } from './components/AdminDashboardView';
+import { CartModal, CartItem } from './components/CartModal';
+import { CustomerOrdersModal } from './components/CustomerOrdersModal';
+import { CustomerProfileModal } from './components/CustomerProfileModal';
 import {
   Sparkles,
   Smartphone,
@@ -27,6 +33,8 @@ import {
   Database,
   AlertTriangle,
   RefreshCw,
+  Shield,
+  ShoppingBag,
 } from 'lucide-react';
 
 export default function App() {
@@ -34,6 +42,24 @@ export default function App() {
   const [products, setProducts] = useState<PhoneProduct[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [dbError, setDbError] = useState<string | null>(null);
+
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+
+  // Customer Cart & Orders State
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const stored = localStorage.getItem('tokohpnovi_cart');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isCartModalOpen, setIsCartModalOpen] = useState(false);
+  const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   // Filters
   const [selectedBrandFilter, setSelectedBrandFilter] = useState('all');
@@ -61,6 +87,24 @@ export default function App() {
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
+
+  // Check active user session on start
+  useEffect(() => {
+    getCurrentUser().then((user) => {
+      if (user) {
+        setCurrentUser(user);
+      }
+    });
+  }, []);
+
+  // Sync cart to local storage
+  useEffect(() => {
+    try {
+      localStorage.setItem('tokohpnovi_cart', JSON.stringify(cart));
+    } catch (e) {
+      console.warn('Gagal menyimpan keranjang ke local storage:', e);
+    }
+  }, [cart]);
 
   // Fetch products from Supabase
   const loadProducts = useCallback(async () => {
@@ -126,6 +170,75 @@ export default function App() {
     setIsChatOpen(true);
   };
 
+  // Cart operations
+  const handleAddToCart = (product: PhoneProduct) => {
+    if (Number(product.stock) <= 0) {
+      addToast('error', `Maaf, stok produk ${product.name} sedang habis.`);
+      return;
+    }
+
+    setCart((prev) => {
+      const existing = prev.find((item) => item.product.id === product.id);
+      if (existing) {
+        return prev.map((item) =>
+          item.product.id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
+      }
+      return [...prev, { product, quantity: 1 }];
+    });
+
+    addToast('success', `${product.name} berhasil ditambahkan ke keranjang belanja.`);
+  };
+
+  const handleUpdateCartQuantity = (productId: string, qty: number) => {
+    if (qty <= 0) {
+      handleRemoveCartItem(productId);
+      return;
+    }
+    setCart((prev) =>
+      prev.map((item) => (item.product.id === productId ? { ...item, quantity: qty } : item))
+    );
+  };
+
+  const handleRemoveCartItem = (productId: string) => {
+    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    addToast('info', 'Produk dihapus dari keranjang.');
+  };
+
+  const handleClearCart = () => {
+    setCart([]);
+  };
+
+  // Auth operations
+  const handleOpenAuth = (mode: 'login' | 'register') => {
+    setAuthModalMode(mode);
+    setIsAuthModalOpen(true);
+  };
+
+  const handleAuthSuccess = (user: UserProfile) => {
+    setCurrentUser(user);
+    addToast(
+      'success',
+      `Selamat datang, ${user.fullName}! Berhasil masuk sebagai ${
+        user.role === 'admin' ? 'Administrator' : 'Pelanggan'
+      }.`
+    );
+
+    // If logging in as admin, redirect to admin dashboard
+    if (user.role === 'admin') {
+      setCurrentTab('admin');
+    }
+  };
+
+  const handleLogout = async () => {
+    await logoutUser();
+    setCurrentUser(null);
+    setCurrentTab('home');
+    addToast('info', 'Anda telah berhasil keluar dari akun (Logout).');
+  };
+
   // Featured and newest products for home page
   const featuredProducts = products.slice(0, 4);
   const latestProducts = [...products]
@@ -133,6 +246,7 @@ export default function App() {
     .slice(0, 4);
 
   const isDbConnected = Boolean(!dbError && products.length > 0);
+  const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans selection:bg-blue-600 selection:text-white">
@@ -149,11 +263,73 @@ export default function App() {
         onSearchChange={setSearchQuery}
         isDbConnected={isDbConnected}
         productCount={products.length}
+        currentUser={currentUser}
+        onOpenAuth={handleOpenAuth}
+        onLogout={handleLogout}
+        onOpenCart={() => setIsCartModalOpen(true)}
+        cartCount={totalCartCount}
+        onOpenOrders={() => setIsOrdersModalOpen(true)}
+        onOpenProfile={() => setIsProfileModalOpen(true)}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
-        {/* BERANDA (HOME) */}
+        {/* ========================================================================= */}
+        {/* A. ADMIN DASHBOARD & MANAGEMENT (Protected Route) */}
+        {/* ========================================================================= */}
+        {currentTab.startsWith('admin') && (
+          <div className="animate-in fade-in duration-200">
+            {currentUser?.role === 'admin' ? (
+              <AdminDashboardView
+                initialTab={
+                  currentTab === 'admin_products'
+                    ? 'products'
+                    : currentTab === 'admin_categories'
+                    ? 'categories'
+                    : currentTab === 'admin_brands'
+                    ? 'brands'
+                    : currentTab === 'admin_stock'
+                    ? 'stock'
+                    : currentTab === 'admin_sql'
+                    ? 'sql'
+                    : 'overview'
+                }
+                onNavigateToCatalog={() => handleNavigate('catalog')}
+              />
+            ) : (
+              <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-3xl border border-slate-200 text-center shadow-lg">
+                <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-4">
+                  <Shield className="w-7 h-7" />
+                </div>
+                <h2 className="text-lg font-bold text-slate-900">Akses Terbatas: Administrator</h2>
+                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                  Halaman Dashboard dan Manajemen Stok Toko HP Novi memerlukan hak akses administrator. Silakan masuk menggunakan akun admin.
+                </p>
+                <div className="mt-6 flex flex-col gap-2">
+                  <button
+                    onClick={() => {
+                      setAuthModalMode('login');
+                      setIsAuthModalOpen(true);
+                    }}
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-blue-600/20 cursor-pointer"
+                  >
+                    Masuk Sebagai Admin
+                  </button>
+                  <button
+                    onClick={() => handleNavigate('home')}
+                    className="w-full py-2.5 text-slate-600 hover:bg-slate-100 font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+                  >
+                    Kembali ke Beranda
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* B. BERANDA (HOME) */}
+        {/* ========================================================================= */}
         {currentTab === 'home' && (
           <div className="space-y-14 animate-in fade-in duration-200">
             {/* Hero Section */}
@@ -273,7 +449,9 @@ export default function App() {
           </div>
         )}
 
-        {/* KATALOG PRODUK / SMARTPHONE / AKSESORI */}
+        {/* ========================================================================= */}
+        {/* C. KATALOG PRODUK / SMARTPHONE / AKSESORI */}
+        {/* ========================================================================= */}
         {(currentTab === 'catalog' ||
           currentTab === 'smartphones' ||
           currentTab === 'accessories') && (
@@ -296,7 +474,9 @@ export default function App() {
           </div>
         )}
 
-        {/* TENTANG KAMI */}
+        {/* ========================================================================= */}
+        {/* D. TENTANG KAMI */}
+        {/* ========================================================================= */}
         {currentTab === 'about' && (
           <div className="animate-in fade-in duration-200">
             <AboutPage
@@ -309,7 +489,9 @@ export default function App() {
           </div>
         )}
 
-        {/* KONTAK */}
+        {/* ========================================================================= */}
+        {/* E. KONTAK */}
+        {/* ========================================================================= */}
         {currentTab === 'contact' && (
           <div className="animate-in fade-in duration-200">
             <ContactPage
@@ -341,11 +523,12 @@ export default function App() {
         </button>
       </div>
 
-      {/* Modals */}
+      {/* Modals & Dialogs */}
       <ProductDetailModal
         product={selectedProduct}
         onClose={() => setSelectedProduct(null)}
         onAskAI={handleAskAIAboutProduct}
+        onAddToCart={handleAddToCart}
       />
 
       <ChatbotModal
@@ -365,6 +548,44 @@ export default function App() {
         dbError={dbError}
         productCount={products.length}
         onRefresh={loadProducts}
+      />
+
+      {/* Supabase Authentication Modal (Login & Register) */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        initialMode={authModalMode}
+        onSuccess={handleAuthSuccess}
+      />
+
+      {/* Shopping Cart Modal */}
+      <CartModal
+        isOpen={isCartModalOpen}
+        onClose={() => setIsCartModalOpen(false)}
+        cart={cart}
+        onUpdateQuantity={handleUpdateCartQuantity}
+        onRemoveItem={handleRemoveCartItem}
+        onClearCart={handleClearCart}
+        currentUser={currentUser}
+        onOrderCreated={(newOrder) => {
+          addToast('success', `Pesanan #${newOrder.order_number} berhasil dibuat!`);
+        }}
+      />
+
+      {/* Customer Orders History Modal */}
+      <CustomerOrdersModal
+        isOpen={isOrdersModalOpen}
+        onClose={() => setIsOrdersModalOpen(false)}
+        currentUser={currentUser}
+      />
+
+      {/* Customer Profile Modal */}
+      <CustomerProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onOpenAdminDashboard={() => handleNavigate('admin')}
       />
 
       {/* Toast notifications */}
