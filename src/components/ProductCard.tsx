@@ -1,8 +1,16 @@
-import React from 'react';
+
+import React, { useEffect, useState } from 'react';
 import { PhoneProduct } from '../lib/supabase';
 import { formatRupiah } from '../lib/config';
 import { ProductPlaceholder } from './ProductPlaceholder';
-import { Sparkles, Info, CheckCircle2, XCircle, HardDrive, Cpu, ShieldCheck } from 'lucide-react';
+import {
+  Sparkles,
+  Info,
+  CheckCircle2,
+  XCircle,
+  HardDrive,
+  Cpu
+} from 'lucide-react';
 
 interface ProductCardProps {
   product: PhoneProduct;
@@ -10,37 +18,58 @@ interface ProductCardProps {
   onAskAI: (product: PhoneProduct) => void;
 }
 
-export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onAskAI }) => {
+export const ProductCard: React.FC<ProductCardProps> = ({
+  product,
+  onSelect,
+  onAskAI
+}) => {
   const isOutOfStock = Number(product.stock) <= 0;
-  const isPhone = (product.category || 'Smartphone').toLowerCase() === 'smartphone';
+
+  const isPhone =
+    (product.category || 'Smartphone').toLowerCase() === 'smartphone';
+
+  const [imageFailed, setImageFailed] = useState(false);
+
+  // Reset status gambar ketika produk atau URL gambar berubah
+  useEffect(() => {
+    setImageFailed(false);
+  }, [product.id, product.image_url]);
+
+  const showPlaceholder = !product.image_url || imageFailed;
 
   return (
     <div className="group bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-xl hover:border-blue-300 transition-all duration-300 flex flex-col justify-between overflow-hidden">
+
       <div>
-        {/* Product Image / Placeholder */}
-        <div className="relative cursor-pointer" onClick={() => onSelect(product)}>
-          {product.image_url ? (
-            <div className="w-full h-48 bg-slate-100 flex items-center justify-center p-4 overflow-hidden">
+        {/* Product Image */}
+        <div
+          className="relative cursor-pointer"
+          onClick={() => onSelect(product)}
+        >
+          <div className="w-full h-48 bg-slate-100 flex items-center justify-center overflow-hidden p-4">
+
+            {showPlaceholder ? (
+              <div className="w-full h-full flex items-center justify-center">
+                <ProductPlaceholder
+                  brand={product.brand}
+                  name={product.name}
+                  category={product.category}
+                  color={product.color}
+                  ram={product.ram_gb}
+                  storage={product.storage_gb}
+                />
+              </div>
+            ) : (
               <img
-                src={product.image_url}
-                alt={product.name}
-                className="max-h-full object-contain group-hover:scale-105 transition-transform duration-300"
-                onError={(e) => {
-                  // Fallback if image fails to load
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
+                src={product.image_url!}
+                alt={`Foto ${product.name}`}
+                loading="lazy"
+                className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+                onError={() => setImageFailed(true)}
               />
-            </div>
-          ) : (
-            <ProductPlaceholder
-              brand={product.brand}
-              name={product.name}
-              category={product.category}
-              color={product.color}
-              ram={product.ram_gb}
-              storage={product.storage_gb}
-            />
-          )}
+            )}
+
+          </div>
 
           {/* Condition Tag */}
           <div className="absolute bottom-2 left-3">
@@ -56,13 +85,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onA
           </div>
         </div>
 
-        {/* Content details */}
+        {/* Product Details */}
         <div className="p-4 space-y-3">
-          {/* Brand & Stock Status */}
+
+          {/* Brand and Stock */}
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-blue-600 uppercase tracking-wider text-[11px]">
               {product.brand}
             </span>
+
             {isOutOfStock ? (
               <span className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100">
                 <XCircle className="w-3 h-3" />
@@ -76,7 +107,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onA
             )}
           </div>
 
-          {/* Product Title */}
+          {/* Product Name */}
           <h3
             onClick={() => onSelect(product)}
             className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors line-clamp-2 text-base leading-snug cursor-pointer min-h-[2.75rem]"
@@ -85,39 +116,48 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onA
             {product.name}
           </h3>
 
-          {/* Specs: RAM & Storage */}
+          {/* RAM and Storage */}
           {isPhone && (product.ram_gb || product.storage_gb) && (
             <div className="flex items-center gap-3 text-xs text-slate-500 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100">
+
               {product.ram_gb && (
                 <div className="flex items-center gap-1">
                   <Cpu className="w-3.5 h-3.5 text-slate-400" />
                   <span>RAM {product.ram_gb} GB</span>
                 </div>
               )}
+
               {product.ram_gb && product.storage_gb && (
                 <span className="text-slate-300">•</span>
               )}
+
               {product.storage_gb && (
                 <div className="flex items-center gap-1">
                   <HardDrive className="w-3.5 h-3.5 text-slate-400" />
                   <span>ROM {product.storage_gb} GB</span>
                 </div>
               )}
+
             </div>
           )}
 
           {/* Price */}
           <div className="pt-1">
-            <div className="text-xs text-slate-400 font-medium">Harga Resmi</div>
+            <div className="text-xs text-slate-400 font-medium">
+              Harga Resmi
+            </div>
+
             <div className="text-lg font-extrabold text-blue-900 tracking-tight">
               {formatRupiah(product.price)}
             </div>
           </div>
+
         </div>
       </div>
 
       {/* Action Buttons */}
       <div className="p-4 pt-0 grid grid-cols-2 gap-2 mt-2">
+
         <button
           type="button"
           onClick={() => onSelect(product)}
@@ -135,6 +175,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onA
           <Sparkles className="w-3.5 h-3.5 text-blue-600" />
           <span>Tanya AI</span>
         </button>
+
       </div>
     </div>
   );
